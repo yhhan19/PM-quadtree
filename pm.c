@@ -19,12 +19,13 @@
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define ABS(a) (((a)>0)?(a):(-(a)))
 #define EPS 1e-6
-#define MAX_DEPTH 10
+#define MAX_DEPTH 5
 #define WIDTH (1<<MAX_DEPTH)
-#define PM_TYPE 2
+#define PM_TYPE 1
 #define BF_CHECK 1
 #define DISPLAY 1
 #define ALL_DISPLAY 0
+#define STATIC 1
 #define DASH_BLACK 1
 #define DASH_WHITE 1
 #define DOT_RADIUS 2
@@ -1851,6 +1852,32 @@ void quad_trav_2(quad *q, char *sout, int *N) {
     }
 }
 
+void quad_trav_3(quad *q, char *sout, int *N) {
+    if (type_of(q) == WHITE) {
+        *N += sprintf(sout + *N, "W");
+    }
+    else if (type_of(q) == BLACK) {
+        *N += sprintf(sout + *N, "B[");
+        list *it = q->edges;
+        while (it != NULL) {
+            edge *e = it->e;
+            if (it->next == NULL) 
+                *N += sprintf(sout + *N, "%s", e->name);
+            else 
+                *N += sprintf(sout + *N, "%s,", e->name);
+            it = it->next;
+        }
+        *N += sprintf(sout + *N, "]");
+    }
+    else if (type_of(q) == GRAY) {
+        int i;
+        for (i = 0; i < 4; i ++) {
+            quad_trav_3(q->child[i], sout, N);
+        }
+        *N += sprintf(sout + *N, "G");
+    }
+}
+
 point gen_point() {
     point a;
     a.x = (rand() * (RAND_MAX + 1) + rand()) % WIDTH;
@@ -1930,8 +1957,8 @@ void load_data(const char *file, point *a, int *N, edge *b, int *M) {
     *N = *M = 0;
     while (fgets(buffer, 256, fin) != NULL) {
         point A, B;
-        int x1, y1, x2, y2;
-        sscanf(buffer, "Line[{{%d., %d.}, {%d., %d.}}]", & x1, & y1, & x2, & y2);
+        double x1, y1, x2, y2;
+        sscanf(buffer, "Line[{{%lf, %lf}, {%lf, %lf}}]", & x1, & y1, & x2, & y2);
         A.x = x1; A.y = y1;
         B.x = x2; B.y = y2;
         int i, j;
@@ -1986,9 +2013,14 @@ void load_data(const char *file, point *a, int *N, edge *b, int *M) {
     
     int i, j;
     for (i = 0; i < *M; i ++) 
-        for (j = i + 1; j < *M; j ++) 
+        for (j = i + 1; j < *M; j ++) {
+            if (strcmp(b[i].name, b[j].name) == 0) {
+                printf("%d %d\n", b[i].a - a, b[i].b - a);
+                printf("%d %d\n", b[j].a - a, b[j].b - a);
+                printf("%s %s\n", b[i].name, b[j].name);
+            }
             assert(strcmp(b[i].name, b[j].name) != 0);
-    
+        }
     printf("load: %d %d\n", *N, *M);
     fclose(fin);
 }
@@ -2133,11 +2165,14 @@ void test_file(const char *file,
     FILE *fin = fopen(input, "w");
     FILE *fout = fopen(output, "w");
     FILE *fd = fopen(decode, "w");
-    fprintf(fin, "INIT_QUADTREE(%d)\n", MAX_DEPTH);
-    fprintf(fd, "1 %d\n", MAX_DEPTH);
+    if (! STATIC) {
+        fprintf(fin, "INIT_QUADTREE(%d)\n", MAX_DEPTH);
+        fprintf(fd, "1 %d\n", MAX_DEPTH);
+    }
     int i, j, k;
     bst *dict = new_bst();
     for (i = 0; i < M; i ++) {
+        dict = bst_insert(dict, b + i);
         fprintf(fin, "CREATE_LINE(%s,%d,%d,%d,%d)\n", 
             b[i].name, dround(b[i].a->x), dround(b[i].a->y), 
             dround(b[i].b->x), dround(b[i].b->y));
@@ -2145,7 +2180,6 @@ void test_file(const char *file,
             b[i].name, dround(b[i].a->x), dround(b[i].a->y), 
             dround(b[i].b->x), dround(b[i].b->y));
         fprintf(fout, "LINE %s IS CREATED\n", b[i].name);
-        dict = bst_insert(dict, b + i);
     }
     fprintf(fin, "LIST LINES()\n");
     fprintf(fd, "3\n");
@@ -2156,103 +2190,126 @@ void test_file(const char *file,
         type[i] = 0;
     int lines = 0;
     for (i = 0; i < M; i ++) {
+        if (! STATIC && rand() % 2 == 0) continue;
         if (b[i].deleted) {
-            fprintf(fin, "INSERT(%s)\n", b[i].name);
             list *temp = new_list_node(b + i);
             quad_insert(root, temp, 0);
             free_list(temp);
             b[i].deleted = 0;
-            fprintf(fd, "6 %s\n", b[i].name);
-            fprintf(fout, "%s IS INSERTED\n", b[i].name);
+            if (! STATIC) {
+                fprintf(fin, "INSERT(%s)\n", b[i].name);
+                fprintf(fd, "6 %s\n", b[i].name);
+                fprintf(fout, "%s IS INSERTED\n", b[i].name);
+            }
         }
     }
-    //quad_trav(root, fout); fprintf(fout, "\n");
+    if (STATIC) {
+        fprintf(fin, "BUILD_QUADTREE(%d)\n", MAX_DEPTH);
+        quad_trav(root, fin); fprintf(fin, "\n");
+    }
     int len = 0, cur = 0;
     quad_trav_2(root, string_buffer, & len);
-    //printf("%s\n", string_buffer);
+    printf("%s\n", string_buffer);
     quad *root_ = build_quad(string_buffer, & cur, dict, NULL, -1);
     quad *temp = root;
     root = root_;
     free_quad(temp);
+    /*
+    len = 0;
+    quad_trav_3(root, string_buffer, & len);
+    printf("%s\n", string_buffer);
+    */
     if (DISPLAY) {
+        display(root, b, M, fout);
         fprintf(fin, "DISPLAY()\n");
         fprintf(fd, "2\n");
-        display(root, b, M, fout);
     }
     printf("init group done: %d %d\n", quad_count, list_count);
-    for (i = 0; i < O; i ++) {
+    for (i = 0; i < O; ) {
         int o = rand() % OP_TYPE;
+        if (o != 1 && o != 2 && o != 6) continue;
+        type[o] ++;
+        //printf("%d\n", o);
         switch (o) {
             case 0: 
-                if (DISPLAY) {
-                    fprintf(fin, "DISPLAY()\n");
-                    fprintf(fd, "2\n");
-                    display(root, b, M, fout);
+                {
+                    if (STATIC) break;
+                    if (DISPLAY) {
+                        display(root, b, M, fout);
+                        fprintf(fin, "DISPLAY()\n");
+                        fprintf(fd, "2\n");
+                    }
+                    i ++;
                 }
-                type[o] ++;
                 break;
             case 1:
-                j = rand() % M;
-                type[o] ++;
-                if (b[j].deleted) {
-                    list *temp = new_list_node(b + j);
-                    quad_insert(root, temp, 0);
-                    free_list(temp);
-                    b[j].deleted = 0;
-                    fprintf(fin, "INSERT(%s)\n", b[j].name);
-                    fprintf(fd, "6 %s\n", b[i].name);
-                    fprintf(fout, "%s IS INSERTED\n", b[j].name);
-                    if (DISPLAY && ALL_DISPLAY) {
-                        display(root, b, M, fout);
-                    }
-                }
-                break;
-            case 2: 
-                if (rand() % 5 == 0) {
-                    point *p = a + rand() % N;
-                    list *temp = quad_search(root, p), *it = temp;
-                    int count = 0;
-                    while (it != NULL) {
-                        count ++;
-                        it = it->next;
-                    }
-                    free_list(temp);
-                    root = quad_delete_point(root, p);
-                    fprintf(fin, "DELETE_POINT(%d,%d)\n", 
-                        dround(p->x), dround(p->y));
-                    fprintf(fd, "72 %d %d\n", 
-                        dround(p->x), dround(p->y));
-                    fprintf(fout, "%d LINE(S) DELETED\n", count);
-                    if (DISPLAY && ALL_DISPLAY) {
-                        fprintf(fout, "$$$$ SP(%.2lf,%.2lf)\n", 
-                            (double) WIDTH, (double) WIDTH);
-                        int j;
-                        for (j = 0; j < M; j ++) {
-                            if (! b[j].deleted) 
-                                edge_display(b + j, fout);
-                        }
-                        fprintf(fout, "DD(%.2lf,%.2lf,%d)\n", 
-                            p->x, p->y, DOT_RADIUS);
-                        fprintf(fout, "LD(%d,%d)\n", DASH_BLACK, DASH_WHITE);
-                        window_display(& root->A, & root->B, fout);
-                        quad_display(root, fout);
-                        fprintf(fout, "EP\n");
-                    }
-                }
-                else {
+                {
+                    if (STATIC) break;
                     j = rand() % M;
-                    if (! b[j].deleted) {
-                        root = quad_delete(root, b + j);
-                        b[j].deleted = 1;
-                        fprintf(fin, "DELETE(%s)\n", b[j].name);
-                        fprintf(fd, "71 %s\n", b[j].name);
-                        fprintf(fout, "%s IS DELETED\n", b[j].name);
+                    if (b[j].deleted) {
+                        list *temp = new_list_node(b + j);
+                        quad_insert(root, temp, 0);
+                        free_list(temp);
+                        b[j].deleted = 0;
+                        fprintf(fin, "INSERT(%s)\n", b[j].name);
+                        fprintf(fd, "6 %s\n", b[i].name);
+                        fprintf(fout, "%s IS INSERTED\n", b[j].name);
                         if (DISPLAY && ALL_DISPLAY) {
                             display(root, b, M, fout);
                         }
                     }
+                    i ++;
                 }
-                type[o] ++;
+                break;
+            case 2: 
+                {
+                    if (STATIC) break;
+                    if (rand() % 5 == 0) {
+                        point *p = a + rand() % N;
+                        list *temp = quad_search(root, p), *it = temp;
+                        int count = 0;
+                        while (it != NULL) {
+                            count ++;
+                            it = it->next;
+                        }
+                        free_list(temp);
+                        root = quad_delete_point(root, p);
+                        fprintf(fin, "DELETE_POINT(%d,%d)\n", 
+                            dround(p->x), dround(p->y));
+                        fprintf(fd, "72 %d %d\n", 
+                            dround(p->x), dround(p->y));
+                        fprintf(fout, "%d LINE(S) DELETED\n", count);
+                        if (DISPLAY && ALL_DISPLAY) {
+                            fprintf(fout, "$$$$ SP(%.2lf,%.2lf)\n", 
+                                (double) WIDTH, (double) WIDTH);
+                            int j;
+                            for (j = 0; j < M; j ++) {
+                                if (! b[j].deleted) 
+                                    edge_display(b + j, fout);
+                            }
+                            fprintf(fout, "DD(%.2lf,%.2lf,%d)\n", 
+                                p->x, p->y, DOT_RADIUS);
+                            fprintf(fout, "LD(%d,%d)\n", DASH_BLACK, DASH_WHITE);
+                            window_display(& root->A, & root->B, fout);
+                            quad_display(root, fout);
+                            fprintf(fout, "EP\n");
+                        }
+                    }
+                    else {
+                        j = rand() % M;
+                        if (! b[j].deleted) {
+                            root = quad_delete(root, b + j);
+                            b[j].deleted = 1;
+                            fprintf(fin, "DELETE(%s)\n", b[j].name);
+                            fprintf(fd, "71 %s\n", b[j].name);
+                            fprintf(fout, "%s IS DELETED\n", b[j].name);
+                            if (DISPLAY && ALL_DISPLAY) {
+                                display(root, b, M, fout);
+                            }
+                        }
+                    }
+                    i ++;
+                }
                 break;
             case 3: 
                 {
@@ -2265,9 +2322,9 @@ void test_file(const char *file,
                         dround(A.x), dround(A.y), dround(B.x), dround(B.y));
                     fprintf(fd, "4 %d %d %d %d %d\n", lines, 
                         dround(A.x), dround(A.y), dround(B.x), dround(B.y));
+                    fprintf(fout, "%d IS CREATED\n", lines);
                     fprintf(fin, "LINE_SEARCH(%d)\n", lines);
                     fprintf(fd, "5 %d\n", lines);
-                    fprintf(fout, "%d IS CREATED\n", lines);
                     if (ret->s == 0) 
                         fprintf(fout, 
                             "%d DOES NOT INTERSECT ANY EXISTING LINE\n", lines);
@@ -2301,8 +2358,8 @@ void test_file(const char *file,
                         }
                     }
                     free_bst(ret);
+                    i ++;
                 }
-                type[o] ++;
                 break;
             case 4:
                 {
@@ -2351,8 +2408,8 @@ void test_file(const char *file,
                             }
                         }
                     }
+                    i ++;
                 }
-                type[o] ++;
                 break;
             case 5: 
                 {
@@ -2408,11 +2465,13 @@ void test_file(const char *file,
                         }
                     }
                     free_bst(ret);
+                    i ++;
                 }
-                type[o] ++;
                 break;
             case 6:
-                type[o] ++;
+                {
+                    i ++;
+                }
                 break;
             case 7: 
                 {
@@ -2469,8 +2528,8 @@ void test_file(const char *file,
                     }
                     free_bst(ret);
                     free(c);
+                    i ++;
                 }
-                type[o] ++;
                 break;
             case 8: 
                 {
@@ -2540,29 +2599,30 @@ void test_file(const char *file,
                         free(e_);
                     }
                     free(e);
+                    i ++;
                 }
-                type[o] ++;
                 break;
         }
     }
     printf("first group done: %d %d\n", quad_count, list_count);
+    for (i = 0; i < M; i ++) {
+        if (STATIC) continue;
+        if (b[i].deleted) {
+            fprintf(fin, "INSERT(%s)\n", b[i].name);
+            list *temp = new_list_node(b + i);
+            quad_insert(root, temp, 0);
+            free_list(temp);
+            b[i].deleted = 0;
+            fprintf(fd, "6 %s\n", b[i].name);
+            fprintf(fout, "%s IS INSERTED\n", b[i].name);
+        }
+    }
+    if (DISPLAY) {
+        fprintf(fin, "DISPLAY()\n");
+        fprintf(fd, "2\n");
+        display(root, b, M, fout);
+    }
     if (type[6] > 0) {
-        for (i = 0; i < M; i ++) {
-            if (b[i].deleted) {
-                fprintf(fin, "INSERT(%s)\n", b[i].name);
-                list *temp = new_list_node(b + i);
-                quad_insert(root, temp, 0);
-                free_list(temp);
-                b[i].deleted = 0;
-                fprintf(fd, "6 %s\n", b[i].name);
-                fprintf(fout, "%s IS INSERTED\n", b[i].name);
-            }
-        }
-        if (DISPLAY) {
-            fprintf(fin, "DISPLAY()\n");
-            fprintf(fd, "2\n");
-            display(root, b, M, fout);
-        }
         int X = 0, Y = 0;
         for (i = 0; i < type[6]; i ++) {
             point *temp;
@@ -2576,7 +2636,7 @@ void test_file(const char *file,
             }
             else {
                 Y ++;
-                assert(K == 3);
+                //assert(K == 3);
                 free(temp);
             }
         }
@@ -2596,11 +2656,15 @@ void test_file(const char *file,
     fclose(fout);
 }
 
-int main() {
+void init() {
     init_bst();
     clock_t t = time(0);
     srand(t);
     printf("seed: %d\n", t);
-    test_file("mesh.txt", "input.txt", "decode.txt", "output.txt", 1024);
+}
+
+int main() {
+    init();
+    test_file("mesh.txt", "input.txt", "decode.txt", "output.txt", 128);
     return EXIT_SUCCESS;
 }
